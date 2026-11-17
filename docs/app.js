@@ -1,0 +1,276 @@
+'use strict';
+
+// ---------- settings ----------
+const TUNINGS = {
+  standard:  { name: 'レギュラー (E A D G B E)', notes: [40, 45, 50, 55, 59, 64] },
+  halfdown:  { name: '半音下げ (E♭ A♭ D♭ G♭ B♭ E♭)', notes: [39, 44, 49, 54, 58, 63] },
+  dropd:     { name: 'ドロップD (D A D G B E)', notes: [38, 45, 50, 55, 59, 64] },
+  wholedown: { name: '全音下げ (D G C F A D)', notes: [38, 43, 48, 53, 57, 62] },
+  dadgad:    { name: 'DADGAD', notes: [38, 45, 50, 55, 57, 62] },
+  openg:     { name: 'オープンG (D G D G B D)', notes: [38, 43, 50, 55, 59, 62] },
+  chromatic: { name: 'クロマチック（全音名）', notes: null },
+};
+// fast: 短い窓 + 弱いスムージング / stable: 長い窓 + 強めのスムージング
+const SPEED = {
+  fast:   { fftSize: 2048, median: 1, alpha: 0.55 },
+  stable: { fftSize: 4096, median: 5, alpha: 0.25 },
+};
+const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+const GATE_RMS = 0.006;   // これより小さい音は無視
+const HOLD_MS = 900;      // 音が消えてから表示を保持する時間
+const IN_TUNE = 2;        // ±2 cent 以内で合格
+const NEAR = 8;
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('tuner.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('tuner.' + k, JSON.stringify(v)); } catch {} },
+};
+let tuningKey = store.get('tuning', 'standard');
+if (!TUNINGS[tuningKey]) tuningKey = 'standard';
+let a4 = store.get('a4', 440);
+let speedKey = store.get('speed', 'fast');
+if (!SPEED[speedKey]) speedKey = 'fast';
+let locked = null; // 固定中の弦 index
+
+// ---------- DOM ----------
+const $ = (id) => document.getElementById(id);
+const els = {
+  tuning: $('tuning'), a4: $('a4'), display: $('display'), needle: $('needle'), note: $('note'),
+  cents: $('cents'), freq: $('freq'), hint: $('hint'), strings: $('strings'), lockinfo: $('lockinfo'),
+  speed: $('speed'), info: $('info'), start: $('start'), startBtn: $('startBtn'), startMsg: $('startMsg'),
+  okmark: $('okmark'),
+};
+
+const midiToFreq = (m) => a4 * Math.pow(2, (m - 69) / 12);
+const noteName = (m) => NAMES[((m % 12) + 12) % 12];
+const octave = (m) => Math.floor(m / 12) - 1;
+const centsBetween = (f, ref) => 1200 * Math.log2(f / ref);
+
+// gauge ticks
+(function drawTicks() {
+  const g = $('ticks');
+  const cx = 150, cy = 165, r = 135;
+  let html = '';
+  for (let c = -50; c <= 50; c += 5) {
+    const a = (c / 50) * 50 * Math.PI / 180;
+    const major = c % 10 === 0;
+    const len = c === 0 ? 18 : major ? 12 : 6;
+    const x1 = cx + r * Math.sin(a), y1 = cy - r * Math.cos(a);
+    const x2 = cx + (r - len) * Math.sin(a), y2 = cy - (r - len) * Math.cos(a);
+    const col = c === 0 ? 'var(--ok)' : 'var(--dim)';
+    html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${c === 0 ? 3 : major ? 2 : 1}" stroke-linecap="round"/>`;
+    if (c !== 0 && c % 20 === 0) {
+      const tx = cx + (r - 26) * Math.sin(a), ty = cy - (r - 26) * Math.cos(a) + 4;
+      html += `<text x="${tx}" y="${ty}" fill="var(--dim)" font-size="10" text-anchor="middle">${c > 0 ? '+' + c : c}</text>`;
+    }
+  }
+  g.innerHTML = html;
+})();
+
+// ---------- UI build ----------
+function buildTuningSelect() {
+  els.tuning.innerHTML = Object.entries(TUNINGS)
+    .map(([k, t]) => `<option value="${k}" ${k === tuningKey ? 'selected' : ''}>${t.name}</option>`).join('');
+}
+function buildStrings() {
+  const t = TUNINGS[tuningKey];
+  if (!t.notes) { els.strings.classList.add('hidden'); els.lockinfo.textContent = ''; return; }
+  els.strings.classList.remove('hidden');
+  // 6弦 → 1弦 の順に表示
+  els.strings.innerHTML = t.notes.map((m, i) =>
+    `<button data-i="${i}" class="${locked === i ? 'locked' : ''}">${noteName(m)}<small>${6 - i}弦</small></button>`).join('');
+  els.lockinfo.textContent = locked === null
+    ? '弦をタップするとその弦に固定（もう一度で自動）'
+    : `${6 - locked}弦に固定中（もう一度タップで自動）`;
+}
+function buildSpeed() {
+  [...els.speed.children].forEach((b) => b.classList.toggle('on', b.dataset.v === speedKey));
+}
+buildTuningSelect(); buildStrings(); buildSpeed(); els.a4.textContent = a4;
+
+els.tuning.addEventListener('change', () => {
+  tuningKey = els.tuning.value; store.set('tuning', tuningKey); locked = null; buildStrings(); resetSmoothing();
+});
+els.strings.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const i = +b.dataset.i; locked = locked === i ? null : i; buildStrings(); resetSmoothing();
+});
+els.speed.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  speedKey = b.dataset.v; store.set('speed', speedKey); buildSpeed(); applySpeed();
+});
+function setA4(v) { a4 = Math.max(430, Math.min(450, v)); els.a4.textContent = a4; store.set('a4', a4); }
+$('a4down').addEventListener('click', () => setA4(a4 - 1));
+$('a4up').addEventListener('click', () => setA4(a4 + 1));
+
+// ---------- audio ----------
+let ctx = null, analyser = null, buf = null, stream = null, running = false;
+let wakeLock = null;
+
+async function start() {
+  els.startMsg.classList.remove('err');
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    showStartError('マイクを使うには HTTPS で開く必要があります（GitHub Pages などで公開してください）。');
+    return;
+  }
+  try {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    }
+    if (ctx.state !== 'running') await ctx.resume();
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+          channelCount: 1, latency: 0,
+        },
+      });
+      const src = ctx.createMediaStreamSource(stream);
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45;
+      analyser = ctx.createAnalyser();
+      analyser.smoothingTimeConstant = 0;
+      const mute = ctx.createGain(); mute.gain.value = 0;
+      src.connect(hp).connect(analyser).connect(mute).connect(ctx.destination);
+      applySpeed();
+      stream.getAudioTracks()[0].addEventListener('ended', () => { stream = null; stop(); });
+    }
+    els.start.classList.add('hidden');
+    requestWakeLock();
+    if (!running) { running = true; requestAnimationFrame(tick); }
+  } catch (err) {
+    console.error(err);
+    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+    showStartError(denied
+      ? 'マイクの使用が許可されませんでした。ブラウザの設定でマイクを許可してから、もう一度タップしてください。'
+      : 'マイクを開始できませんでした：' + (err && err.message ? err.message : err));
+  }
+}
+function stop() {
+  running = false;
+  els.start.classList.remove('hidden');
+  els.startBtn.textContent = 'タップして再開';
+}
+function showStartError(msg) {
+  els.start.classList.remove('hidden');
+  els.startMsg.textContent = msg; els.startMsg.classList.add('err');
+}
+function applySpeed() {
+  if (!analyser) return;
+  analyser.fftSize = SPEED[speedKey].fftSize;
+  buf = new Float32Array(analyser.fftSize);
+  resetSmoothing();
+  updateInfo();
+}
+function updateInfo() {
+  if (!ctx) return;
+  const winMs = (analyser.fftSize / ctx.sampleRate) * 1000;
+  const base = ctx.baseLatency ? ` / 出力側 ${(ctx.baseLatency * 1000).toFixed(0)}ms` : '';
+  els.info.textContent = `${ctx.sampleRate}Hz ・ 解析窓 ${winMs.toFixed(0)}ms${base}`;
+}
+
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch { /* 非対応 or 拒否：無視 */ }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (ctx && ctx.state !== 'running') {
+      ctx.resume().catch(() => {}).then(() => { if (ctx.state !== 'running') stop(); });
+    }
+    if (running) requestWakeLock();
+  }
+});
+els.startBtn.addEventListener('click', start);
+
+// ---------- smoothing ----------
+let hist = [], smooth = null, lastHeard = 0;
+function resetSmoothing() { hist = []; smooth = null; }
+function median(arr) {
+  const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
+}
+function smoothFreq(f) {
+  const cfg = SPEED[speedKey];
+  // 大きく音が変わったら（別の弦に移った等）即座に追従
+  if (smooth !== null && Math.abs(centsBetween(f, smooth)) > 35) resetSmoothing();
+  hist.push(f); if (hist.length > cfg.median) hist.shift();
+  const m = median(hist);
+  smooth = smooth === null ? m : smooth * Math.pow(m / smooth, cfg.alpha); // 対数領域で補間
+  return smooth;
+}
+
+// ---------- main loop ----------
+function tick() {
+  if (!running) return;
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+
+  const now = performance.now();
+  let res = null;
+  if (rms > GATE_RMS) res = PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15);
+
+  if (res) {
+    lastHeard = now;
+    render(smoothFreq(res.freq));
+  } else if (now - lastHeard > HOLD_MS && smooth !== null) {
+    resetSmoothing();
+    setIdle();
+  }
+  requestAnimationFrame(tick);
+}
+
+function setIdle() {
+  els.display.classList.add('idle');
+  els.hint.textContent = ''; els.hint.className = 'hint';
+  els.okmark.setAttribute('opacity', '0');
+  [...els.strings.children].forEach((b) => b.classList.remove('active', 'tuned'));
+}
+
+function render(f) {
+  const t = TUNINGS[tuningKey];
+  let m;
+  if (t.notes) {
+    if (locked !== null) m = t.notes[locked];
+    else {
+      let best = Infinity;
+      t.notes.forEach((n) => { const d = Math.abs(centsBetween(f, midiToFreq(n))); if (d < best) { best = d; m = n; } });
+    }
+  } else {
+    m = Math.round(69 + 12 * Math.log2(f / a4));
+  }
+  const c = centsBetween(f, midiToFreq(m));
+  const abs = Math.abs(c);
+  const cls = abs <= IN_TUNE ? 'ok' : abs <= NEAR ? 'near' : 'off';
+
+  els.display.classList.remove('idle');
+  els.note.innerHTML = `<span class="${cls}">${noteName(m)}</span><sub>${octave(m)}</sub>`;
+  els.cents.textContent = (c > 0 ? '+' : '') + c.toFixed(1);
+  els.freq.textContent = f.toFixed(1);
+  const angle = Math.max(-50, Math.min(50, c)); // ±50cent → ±50°
+  els.needle.setAttribute('transform', `rotate(${angle} 150 165)`);
+  els.okmark.setAttribute('opacity', cls === 'ok' ? '1' : '0');
+
+  if (abs > 300 && t.notes) els.hint.textContent = c < 0 ? 'かなり低い' : 'かなり高い';
+  else if (cls === 'ok') els.hint.textContent = '✓ OK';
+  else els.hint.textContent = c < 0 ? '↑ 上げる（締める）' : '↓ 下げる（緩める）';
+  els.hint.className = 'hint ' + cls;
+
+  if (t.notes) {
+    const idx = t.notes.indexOf(m);
+    [...els.strings.children].forEach((b, i) => {
+      b.classList.toggle('active', i === idx);
+      b.classList.toggle('tuned', i === idx && cls === 'ok');
+    });
+  }
+}
+
+// ---------- PWA ----------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}

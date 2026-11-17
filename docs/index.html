@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tuner">
+<title>Guitar Tuner</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #111418; --panel: #1b1f25; --line: #2c323b; --text: #e8ebef; --dim: #7d8794;
+    --ok: #3ddc84; --near: #f5c542; --off: #ff6b5b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center;
+    padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 16px);
+    user-select: none; -webkit-user-select: none; overscroll-behavior: none; }
+  .wrap { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
+
+  .bar { display: flex; gap: 8px; }
+  select, .chip { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; font-size: 15px; font-family: inherit; }
+  select { flex: 1; min-width: 0; appearance: none; -webkit-appearance: none; }
+  .chip { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .chip button { background: none; border: none; color: var(--text); font-size: 18px; padding: 0 4px; }
+
+  .display { background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+    padding: 16px 12px 18px; display: flex; flex-direction: column; align-items: center; transition: opacity .2s; }
+  .display.idle { opacity: .45; }
+  svg { width: 100%; height: auto; display: block; }
+  .note { font-size: 84px; font-weight: 700; line-height: 1; margin-top: -8px; letter-spacing: -1px;
+    font-variant-numeric: tabular-nums; }
+  .note sub { font-size: 28px; font-weight: 500; color: var(--dim); margin-left: 2px; }
+  .readout { display: flex; gap: 18px; color: var(--dim); font-size: 15px; margin-top: 6px;
+    font-variant-numeric: tabular-nums; }
+  .readout b { color: var(--text); font-weight: 600; }
+  .hint { height: 22px; margin-top: 8px; font-size: 16px; font-weight: 600; }
+  .ok   { color: var(--ok); }  .near { color: var(--near); }  .off { color: var(--off); }
+
+  .strings { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .strings button { background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 12px; padding: 10px 0 8px; font-size: 18px; font-weight: 600; font-family: inherit; }
+  .strings button small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; margin-top: 2px; }
+  .strings button.active { border-color: var(--text); }
+  .strings button.locked { background: #2a3340; border-color: #6aa9ff; }
+  .strings button.tuned { color: var(--ok); }
+  .strings.hidden { display: none; }
+  .lockinfo { text-align: center; font-size: 12px; color: var(--dim); min-height: 16px; margin-top: -6px; }
+
+  .speed { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 3px; }
+  .speed button { background: none; border: none; color: var(--dim); padding: 8px; border-radius: 8px;
+    font-size: 14px; font-family: inherit; }
+  .speed button.on { background: #2a313b; color: var(--text); }
+  .info { text-align: center; font-size: 11px; color: var(--dim); margin-top: auto; line-height: 1.6; }
+
+  #start { position: fixed; inset: 0; background: rgba(10,12,15,.92); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; z-index: 10; padding: 24px; text-align: center; }
+  #start button { background: var(--ok); color: #08130c; border: none; border-radius: 999px;
+    padding: 16px 40px; font-size: 18px; font-weight: 700; font-family: inherit; }
+  #start p { color: var(--dim); font-size: 14px; margin: 0; max-width: 300px; line-height: 1.6; }
+  #start .err { color: var(--off); }
+  #start.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <select id="tuning" aria-label="チューニング"></select>
+    <div class="chip">A4
+      <button id="a4down" aria-label="A4を下げる">−</button>
+      <span id="a4">440</span>
+      <button id="a4up" aria-label="A4を上げる">＋</button>
+    </div>
+  </div>
+
+  <div class="display idle" id="display">
+    <svg viewBox="0 0 300 175" aria-hidden="true">
+      <g id="ticks"></g>
+      <rect x="140" y="20" width="20" height="4" rx="2" fill="var(--ok)" opacity=".0" id="okmark"/>
+      <g id="needle" transform="rotate(0 150 165)">
+        <line x1="150" y1="165" x2="150" y2="34" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <circle cx="150" cy="165" r="7" fill="var(--text)"/>
+      <text x="22" y="170" fill="var(--dim)" font-size="13">♭</text>
+      <text x="270" y="170" fill="var(--dim)" font-size="13">♯</text>
+    </svg>
+    <div class="note" id="note">–</div>
+    <div class="readout">
+      <span><b id="cents">–</b> cent</span>
+      <span><b id="freq">–</b> Hz</span>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div class="strings" id="strings"></div>
+  <div class="lockinfo" id="lockinfo">弦をタップするとその弦に固定（もう一度で自動）</div>
+
+  <div class="speed" id="speed">
+    <button data-v="fast">反応 速い</button>
+    <button data-v="stable">安定重視</button>
+  </div>
+
+  <div class="info" id="info"></div>
+</div>
+
+<div id="start">
+  <button id="startBtn">タップして開始</button>
+  <p id="startMsg">マイクを使って音程を判定します。音声はスマホの中だけで処理され、どこにも送信されません。</p>
+</div>
+
+<script src="./pitch.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
