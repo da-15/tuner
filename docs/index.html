@@ -35,6 +35,8 @@
   .display { background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
     padding: 16px 12px 18px; display: flex; flex-direction: column; align-items: center; transition: opacity .2s; }
   .display.idle { opacity: .45; }
+  .display.held svg, .display.held .note, .display.held .readout { opacity: .6; }
+  .display.held .hint::after { content: '・保持中'; color: var(--dim); font-weight: 400; font-size: 13px; margin-left: 4px; }
   svg { width: 100%; height: auto; display: block; }
   .note { font-size: 84px; font-weight: 700; line-height: 1; margin-top: -8px; letter-spacing: -1px;
     font-variant-numeric: tabular-nums; }

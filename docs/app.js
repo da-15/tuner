@@ -18,7 +18,9 @@ const SPEED = {
 };
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const GATE_RMS = 0.002;   // これより小さい音は無視（iPhoneは入力が小さめなので低めに）
-const HOLD_MS = 900;      // 音が消えてから表示を保持する時間
+const HOLD_RATIO = 0.1;   // ピークの 1/10（-20dB）まで減衰したら針を止める
+const ONSET_RATIO = 2.5;  // 直近の最小音量の 2.5倍（約+8dB）に跳ねたら「弾いた」とみなす
+const IDLE_MS = 15000;    // 止めた表示を残しておく時間
 const IN_TUNE = 2;        // ±2 cent 以内で合格
 const NEAR = 8;
 
@@ -201,7 +203,8 @@ document.addEventListener('visibilitychange', () => {
 els.startBtn.addEventListener('click', start);
 
 // ---------- smoothing ----------
-let hist = [], smooth = null, lastHeard = 0;
+let hist = [], smooth = null;
+let recentRms = [], peakRms = 0, held = false, heldAt = 0;
 function resetSmoothing() { hist = []; smooth = null; }
 function median(arr) {
   const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
@@ -229,13 +232,31 @@ function tick() {
   els.level.classList.toggle('gated', rms <= GATE_RMS);
 
   const now = performance.now();
-  let res = null;
-  if (rms > GATE_RMS) res = PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15);
 
-  if (res) {
-    lastHeard = now;
-    render(smoothFreq(res.freq));
-  } else if (now - lastHeard > HOLD_MS && smooth !== null) {
+  // 弾いた瞬間（直近の最小音量から急に大きくなった）を検出 → 保持を解除してピークを取り直す
+  const floor = recentRms.length ? Math.min(...recentRms) : 0;
+  recentRms.push(rms); if (recentRms.length > 8) recentRms.shift();
+  if (rms > GATE_RMS * 3 && rms > floor * ONSET_RATIO) {
+    peakRms = rms;
+    if (held) { held = false; els.display.classList.remove('held'); }
+    resetSmoothing();
+  } else if (!held) {
+    peakRms = Math.max(peakRms, rms);
+  }
+
+  // 余韻がピークから -20dB を下回ったら（または音が消えたら）針をその位置で止める
+  const decayed = rms <= GATE_RMS || rms < peakRms * HOLD_RATIO;
+  if (!held && decayed && smooth !== null) {
+    held = true; heldAt = now;
+    els.display.classList.add('held');
+  }
+
+  if (!held && rms > GATE_RMS) {
+    const res = PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15);
+    if (res) render(smoothFreq(res.freq));
+  } else if (held && now - heldAt > IDLE_MS) {
+    held = false; peakRms = 0;
+    els.display.classList.remove('held');
     resetSmoothing();
     setIdle();
   }
