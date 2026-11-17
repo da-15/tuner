@@ -1,5 +1,5 @@
 // オフライン対応：アプリ本体をキャッシュ。更新したら CACHE の番号を上げる。
-const CACHE = 'tuner-v1';
+const CACHE = 'tuner-v2';
 const ASSETS = [
   './', './index.html', './app.js', './pitch.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
@@ -17,16 +17,13 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// キャッシュを即返しつつ、裏でネットから更新（stale-while-revalidate）
+// ネット優先（更新がすぐ反映される）。オフライン時だけキャッシュを使う
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then((hit) => {
-      const net = fetch(e.request).then((res) => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    })
+    fetch(e.request).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
+      return res;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });

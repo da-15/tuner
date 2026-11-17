@@ -16,7 +16,7 @@ const SPEED = {
   stable: { fftSize: 4096, median: 5, alpha: 0.25 },
 };
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
-const GATE_RMS = 0.006;   // これより小さい音は無視
+const GATE_RMS = 0.002;   // これより小さい音は無視（iPhoneは入力が小さめなので低めに）
 const HOLD_MS = 900;      // 音が消えてから表示を保持する時間
 const IN_TUNE = 2;        // ±2 cent 以内で合格
 const NEAR = 8;
@@ -38,7 +38,7 @@ const els = {
   tuning: $('tuning'), a4: $('a4'), display: $('display'), needle: $('needle'), note: $('note'),
   cents: $('cents'), freq: $('freq'), hint: $('hint'), strings: $('strings'), lockinfo: $('lockinfo'),
   speed: $('speed'), info: $('info'), start: $('start'), startBtn: $('startBtn'), startMsg: $('startMsg'),
-  okmark: $('okmark'),
+  okmark: $('okmark'), level: $('level'),
 };
 
 const midiToFreq = (m) => a4 * Math.pow(2, (m - 69) / 12);
@@ -105,6 +105,7 @@ $('a4up').addEventListener('click', () => setA4(a4 + 1));
 
 // ---------- audio ----------
 let ctx = null, analyser = null, buf = null, stream = null, running = false;
+let source = null, hp = null, mute = null; // ノードは参照を保持しておく
 let wakeLock = null;
 
 async function start() {
@@ -117,24 +118,33 @@ async function start() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     }
-    if (ctx.state !== 'running') await ctx.resume();
+    // iOS対策：先にマイクを取得してから AudioContext を作る（逆順だと無音になることがある）
     if (!stream) {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-          channelCount: 1, latency: 0,
-        },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-      const src = ctx.createMediaStreamSource(stream);
-      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45;
-      analyser = ctx.createAnalyser();
-      analyser.smoothingTimeConstant = 0;
-      const mute = ctx.createGain(); mute.gain.value = 0;
-      src.connect(hp).connect(analyser).connect(mute).connect(ctx.destination);
+      stream.getAudioTracks()[0].addEventListener('ended', () => { stream = null; source = null; stop(); });
+    }
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    ctx.onstatechange = () => { if (ctx.state !== 'running' && running) stop(); updateInfo(); };
+    if (ctx.state !== 'running') { try { await ctx.resume(); } catch {} }
+    if (!source) {
+      // source はグローバルに保持（参照が切れると Safari で回収されて無音になる）
+      source = ctx.createMediaStreamSource(stream);
+      hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45;
+      if (!analyser) { analyser = ctx.createAnalyser(); analyser.smoothingTimeConstant = 0; }
+      if (!mute) { mute = ctx.createGain(); mute.gain.value = 0; analyser.connect(mute).connect(ctx.destination); }
+      source.connect(hp).connect(analyser);
       applySpeed();
-      stream.getAudioTracks()[0].addEventListener('ended', () => { stream = null; stop(); });
+    }
+    if (ctx.state !== 'running') {
+      // まだ止まっている場合は、もう一度タップしてもらって再開
+      showStartError('音声の開始がブロックされました。もう一度タップしてください。');
+      els.startBtn.textContent = 'タップして再開';
+      return;
     }
     els.start.classList.add('hidden');
+    els.startMsg.classList.remove('err');
     requestWakeLock();
     if (!running) { running = true; requestAnimationFrame(tick); }
   } catch (err) {
@@ -162,10 +172,12 @@ function applySpeed() {
   updateInfo();
 }
 function updateInfo() {
-  if (!ctx) return;
+  if (!ctx || !analyser) return;
   const winMs = (analyser.fftSize / ctx.sampleRate) * 1000;
-  const base = ctx.baseLatency ? ` / 出力側 ${(ctx.baseLatency * 1000).toFixed(0)}ms` : '';
-  els.info.textContent = `${ctx.sampleRate}Hz ・ 解析窓 ${winMs.toFixed(0)}ms${base}`;
+  const tr = stream && stream.getAudioTracks()[0];
+  const st = tr && tr.getSettings ? tr.getSettings() : {};
+  const micRate = st.sampleRate ? ` / マイク ${st.sampleRate}Hz` : '';
+  els.info.textContent = `${ctx.sampleRate}Hz${micRate} ・ 解析窓 ${winMs.toFixed(0)}ms ・ 状態 ${ctx.state}`;
 }
 
 async function requestWakeLock() {
@@ -210,6 +222,10 @@ function tick() {
   let sum = 0;
   for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
   const rms = Math.sqrt(sum / buf.length);
+  // 入力レベルメーター（-60dB〜0dB）
+  const db = 20 * Math.log10(rms + 1e-9);
+  els.level.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+  els.level.classList.toggle('gated', rms <= GATE_RMS);
 
   const now = performance.now();
   let res = null;

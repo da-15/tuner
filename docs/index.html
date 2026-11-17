@@ -43,6 +43,9 @@
     font-variant-numeric: tabular-nums; }
   .readout b { color: var(--text); font-weight: 600; }
   .hint { height: 22px; margin-top: 8px; font-size: 16px; font-weight: 600; }
+  .meter { width: 70%; height: 4px; background: var(--line); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+  .meter div { height: 100%; width: 0; background: var(--ok); }
+  .meter div.gated { background: var(--dim); }
   .ok   { color: var(--ok); }  .near { color: var(--near); }  .off { color: var(--off); }
 
   .strings { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
@@ -99,6 +102,7 @@
       <span><b id="freq">–</b> Hz</span>
     </div>
     <div class="hint" id="hint"></div>
+    <div class="meter" title="入力レベル"><div id="level"></div></div>
   </div>
 
   <div class="strings" id="strings"></div>
