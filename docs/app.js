@@ -220,6 +220,19 @@ function smoothFreq(f) {
   smooth = smooth === null ? m : smooth * Math.pow(m / smooth, cfg.alpha); // 対数領域で補間
   return smooth;
 }
+// オクターブ誤検出の補正：基音が弱い低音弦（ギタレレの6弦Aなど）は余韻で2倍音を拾いやすい
+function correctOctave(f) {
+  // 追いかけている音（または止めている音）のちょうど1オクターブ上なら、倍音を拾ったとみなす
+  if (smooth !== null && Math.abs(centsBetween(f, smooth) - 1200) < 60) return f / 2;
+  // どの弦にも近くないのに、半分の周波数ならどれかの弦に合う場合も補正
+  const t = TUNINGS[tuningKey];
+  if (t.notes) {
+    const targets = locked !== null ? [t.notes[locked]] : t.notes;
+    const dist = (x) => Math.min(...targets.map((n) => Math.abs(centsBetween(x, midiToFreq(n)))));
+    if (dist(f) > 100 && dist(f / 2) < 60) return f / 2;
+  }
+  return f;
+}
 // 今の音から近ければそのまま追従。大きく離れた音は数フレーム続いたときだけ採用（一瞬の誤検出で針が飛ばない）
 function acceptFreq(f) {
   if (smooth !== null && Math.abs(centsBetween(f, smooth)) <= 35) { cand = null; candN = 0; return smoothFreq(f); }
@@ -244,6 +257,7 @@ function tick() {
   envRms = envRms === 0 ? rms : envRms + ENV_ALPHA * (rms - envRms); // うなり等で揺れないよう音量をならす
   const res = rms > GATE_RMS ? PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15) : null;
   const clear = !!res && res.clarity >= CLEAR;
+  const freq = res ? correctOctave(res.freq) : 0;
 
   if (held) {
     // 固定中：止めた時点よりはっきり大きく、かつ音程が明確な状態が続いたら「弾き直し」とみなして解除
@@ -254,7 +268,7 @@ function tick() {
         els.display.classList.remove('held');
         peakRms = envRms = rms;
         resetSmoothing();
-        render(smoothFreq(res.freq));
+        render(smoothFreq(freq));
       }
     } else {
       confirmN = 0;
@@ -277,7 +291,7 @@ function tick() {
   } else if (res) {
     const weak = envRms < peakRms * 0.3;     // 余韻が弱くなってきたら明確な音程だけ使う
     if (!weak || clear) {
-      const f = acceptFreq(res.freq);
+      const f = acceptFreq(freq);
       if (f !== null) render(f);
     }
   }
