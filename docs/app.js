@@ -8,6 +8,7 @@ const TUNINGS = {
   wholedown: { name: '全音下げ (D G C F A D)', notes: [38, 43, 48, 53, 57, 62] },
   dadgad:    { name: 'DADGAD', notes: [38, 45, 50, 55, 57, 62] },
   openg:     { name: 'オープンG (D G D G B D)', notes: [38, 43, 50, 55, 59, 62] },
+  guitalele: { name: 'ギタレレ (A D G C E A)', notes: [45, 50, 55, 60, 64, 69] },
   chromatic: { name: 'クロマチック（全音名）', notes: null },
 };
 // fast: 短い窓 + 弱いスムージング / stable: 長い窓 + 強めのスムージング
