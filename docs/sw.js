@@ -1,12 +1,12 @@
-// オフライン対応：アプリ本体をキャッシュ。更新したら CACHE の番号を上げる。
-const CACHE = 'tuner-v13';
+// オフライン対応：アプリ本体をキャッシュ。更新したら CACHE の番号と index.html の ?v= を上げる。
+const CACHE = 'tuner-v14';
 const ASSETS = [
-  './', './index.html', './app.js', './pitch.js', './manifest.webmanifest',
+  './', './index.html', './app.js?v=14', './pitch.js?v=14', './manifest.webmanifest',
   './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/apple-touch-icon-v2.png', './icons/icon-maskable-512-v2.png', './icons/icon-v2.svg',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -21,7 +21,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request).then((res) => {
+    fetch(e.request, { cache: 'no-cache' }).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }))
