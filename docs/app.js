@@ -18,9 +18,9 @@ const SPEED = {
 };
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const GATE_RMS = 0.001;   // 最低限のしきい値（実際は雑音レベルに合わせて自動で上がる）
-const HOLD_RATIO = 0.1;   // ピークの 1/10（-20dB）まで減衰したら針を止める
+const HOLD_RATIO = 0.05;  // ピークの 1/20（-26dB）まで減衰したら針を止める
 const REPLUCK_RATIO = 2.5; // 余韻の音量の 2.5倍（+8dB）を超えたら弾き直しとみなす
-const SNR_HOLD = 4;       // 雑音の4倍（+12dB）を下回ったら針を止める
+const SNR_HOLD = 2.5;     // 雑音の2.5倍（+8dB）を下回ったら針を止める
 const NOISE_RISE_FAST = 1.01;   // 雑音レベル推定の上昇速度（雑音だけのとき：1秒で約1.8倍）
 const NOISE_RISE_SLOW = 1.0005; // 同（楽器が鳴っているとき：1秒で約3%）
 const ENV_ALPHA = 0.2;    // 音量のならし具合
