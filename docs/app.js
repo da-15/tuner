@@ -19,7 +19,10 @@ const SPEED = {
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const GATE_RMS = 0.002;   // これより小さい音は無視（iPhoneは入力が小さめなので低めに）
 const HOLD_RATIO = 0.1;   // ピークの 1/10（-20dB）まで減衰したら針を止める
-const ONSET_RATIO = 2.5;  // 直近の最小音量の 2.5倍（約+8dB）に跳ねたら「弾いた」とみなす
+const REPLUCK_RATIO = 4;  // 止めた時点の音量の 4倍（+12dB）を超えたら弾き直しとみなす
+const ENV_ALPHA = 0.2;    // 音量のならし具合
+const CLEAR = 0.9;        // 音程の明確さ（YIN）の基準
+const SWITCH_FRAMES = 3;  // 別の音への切り替えに必要な連続フレーム数
 const IDLE_MS = 15000;    // 止めた表示を残しておく時間
 const IN_TUNE = 2;        // ±2 cent 以内で合格
 const NEAR = 8;
@@ -204,19 +207,25 @@ els.startBtn.addEventListener('click', start);
 
 // ---------- smoothing ----------
 let hist = [], smooth = null;
-let recentRms = [], peakRms = 0, held = false, heldAt = 0;
-function resetSmoothing() { hist = []; smooth = null; }
+let cand = null, candN = 0;                    // 別の音へ切り替える候補
+let envRms = 0, peakRms = 0, held = false, heldAt = 0, holdRms = 0, confirmN = 0;
+function resetSmoothing() { hist = []; smooth = null; cand = null; candN = 0; }
 function median(arr) {
   const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
 }
 function smoothFreq(f) {
   const cfg = SPEED[speedKey];
-  // 大きく音が変わったら（別の弦に移った等）即座に追従
-  if (smooth !== null && Math.abs(centsBetween(f, smooth)) > 35) resetSmoothing();
   hist.push(f); if (hist.length > cfg.median) hist.shift();
   const m = median(hist);
   smooth = smooth === null ? m : smooth * Math.pow(m / smooth, cfg.alpha); // 対数領域で補間
   return smooth;
+}
+// 今の音から近ければそのまま追従。大きく離れた音は数フレーム続いたときだけ採用（一瞬の誤検出で針が飛ばない）
+function acceptFreq(f) {
+  if (smooth !== null && Math.abs(centsBetween(f, smooth)) <= 35) { cand = null; candN = 0; return smoothFreq(f); }
+  if (cand !== null && Math.abs(centsBetween(f, cand)) <= 30) candN++; else { cand = f; candN = 1; }
+  if (candN >= (smooth === null ? 2 : SWITCH_FRAMES)) { resetSmoothing(); return smoothFreq(f); }
+  return null;
 }
 
 // ---------- main loop ----------
@@ -232,33 +241,45 @@ function tick() {
   els.level.classList.toggle('gated', rms <= GATE_RMS);
 
   const now = performance.now();
+  envRms = envRms === 0 ? rms : envRms + ENV_ALPHA * (rms - envRms); // うなり等で揺れないよう音量をならす
+  const res = rms > GATE_RMS ? PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15) : null;
+  const clear = !!res && res.clarity >= CLEAR;
 
-  // 弾いた瞬間（直近の最小音量から急に大きくなった）を検出 → 保持を解除してピークを取り直す
-  const floor = recentRms.length ? Math.min(...recentRms) : 0;
-  recentRms.push(rms); if (recentRms.length > 8) recentRms.shift();
-  if (rms > GATE_RMS * 3 && rms > floor * ONSET_RATIO) {
-    peakRms = rms;
-    if (held) { held = false; els.display.classList.remove('held'); }
-    resetSmoothing();
-  } else if (!held) {
-    peakRms = Math.max(peakRms, rms);
+  if (held) {
+    // 固定中：止めた時点よりはっきり大きく、かつ音程が明確な状態が続いたら「弾き直し」とみなして解除
+    // （ペグに触れた雑音は音量が上がっても音程が不明確なので解除されない）
+    if (clear && rms > Math.max(GATE_RMS * 5, holdRms * REPLUCK_RATIO)) {
+      if (++confirmN >= 2) {
+        held = false; confirmN = 0;
+        els.display.classList.remove('held');
+        peakRms = envRms = rms;
+        resetSmoothing();
+        render(smoothFreq(res.freq));
+      }
+    } else {
+      confirmN = 0;
+      if (now - heldAt > IDLE_MS) {
+        held = false; peakRms = 0;
+        els.display.classList.remove('held');
+        resetSmoothing();
+        setIdle();
+      }
+    }
+    requestAnimationFrame(tick);
+    return;
   }
 
+  peakRms = Math.max(peakRms, envRms);
   // 余韻がピークから -20dB を下回ったら（または音が消えたら）針をその位置で止める
-  const decayed = rms <= GATE_RMS || rms < peakRms * HOLD_RATIO;
-  if (!held && decayed && smooth !== null) {
-    held = true; heldAt = now;
+  if (smooth !== null && (rms <= GATE_RMS || envRms < peakRms * HOLD_RATIO)) {
+    held = true; heldAt = now; holdRms = envRms; confirmN = 0;
     els.display.classList.add('held');
-  }
-
-  if (!held && rms > GATE_RMS) {
-    const res = PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15);
-    if (res) render(smoothFreq(res.freq));
-  } else if (held && now - heldAt > IDLE_MS) {
-    held = false; peakRms = 0;
-    els.display.classList.remove('held');
-    resetSmoothing();
-    setIdle();
+  } else if (res) {
+    const weak = envRms < peakRms * 0.3;     // 余韻が弱くなってきたら明確な音程だけ使う
+    if (!weak || clear) {
+      const f = acceptFreq(res.freq);
+      if (f !== null) render(f);
+    }
   }
   requestAnimationFrame(tick);
 }
