@@ -1,5 +1,5 @@
 // オフライン対応：アプリ本体をキャッシュ。更新したら CACHE の番号を上げる。
-const CACHE = 'tuner-v12';
+const CACHE = 'tuner-v13';
 const ASSETS = [
   './', './index.html', './app.js', './pitch.js', './manifest.webmanifest',
   './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/apple-touch-icon-v2.png', './icons/icon-maskable-512-v2.png', './icons/icon-v2.svg',

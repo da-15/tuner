@@ -2,14 +2,11 @@
 
 // ---------- settings ----------
 const TUNINGS = {
-  standard:  { name: 'レギュラー (E A D G B E)', notes: [40, 45, 50, 55, 59, 64] },
-  halfdown:  { name: '半音下げ (E♭ A♭ D♭ G♭ B♭ E♭)', notes: [39, 44, 49, 54, 58, 63] },
-  dropd:     { name: 'ドロップD (D A D G B E)', notes: [38, 45, 50, 55, 59, 64] },
-  wholedown: { name: '全音下げ (D G C F A D)', notes: [38, 43, 48, 53, 57, 62] },
-  dadgad:    { name: 'DADGAD', notes: [38, 45, 50, 55, 57, 62] },
-  openg:     { name: 'オープンG (D G D G B D)', notes: [38, 43, 50, 55, 59, 62] },
-  guitalele: { name: 'ギタレレ (A D G C E A)', notes: [45, 50, 55, 60, 64, 69] },
-  chromatic: { name: 'クロマチック（全音名）', notes: null },
+  standard:  { name: 'レギュラー', notes: [40, 45, 50, 55, 59, 64] },   // E A D G B E
+  halfdown:  { name: '半音下げ', notes: [39, 44, 49, 54, 58, 63] },     // E♭ A♭ D♭ G♭ B♭ E♭
+  guitalele: { name: 'ギタレレ', notes: [45, 50, 55, 60, 64, 69] },     // A D G C E A
+  ukulele:   { name: 'ウクレレ', notes: [67, 60, 64, 69] },             // G C E A（4弦がHigh-G）
+  chromatic: { name: 'クロマチック', notes: null },                     // 全音名
 };
 // fast: 短い窓 + 弱いスムージング / stable: 長い窓 + 強めのスムージング
 const SPEED = {
@@ -79,26 +76,30 @@ const centsBetween = (f, ref) => 1200 * Math.log2(f / ref);
 // ---------- UI build ----------
 function buildTuningSelect() {
   els.tuning.innerHTML = Object.entries(TUNINGS)
-    .map(([k, t]) => `<option value="${k}" ${k === tuningKey ? 'selected' : ''}>${t.name}</option>`).join('');
+    .map(([k, t]) => `<button role="radio" data-v="${k}" aria-checked="${k === tuningKey}" class="${k === tuningKey ? 'on' : ''}">${t.name}</button>`).join('');
 }
 function buildStrings() {
   const t = TUNINGS[tuningKey];
   if (!t.notes) { els.strings.classList.add('hidden'); els.lockinfo.textContent = ''; return; }
   els.strings.classList.remove('hidden');
-  // 6弦 → 1弦 の順に表示
+  const n = t.notes.length;
+  els.strings.style.setProperty('--n', n);
+  // 太い弦（6弦／4弦）→ 1弦 の順に表示
   els.strings.innerHTML = t.notes.map((m, i) =>
-    `<button data-i="${i}" class="${locked === i ? 'locked' : ''}">${noteName(m)}<small>${6 - i}弦</small></button>`).join('');
+    `<button data-i="${i}" class="${locked === i ? 'locked' : ''}">${noteName(m)}<small>${n - i}弦</small></button>`).join('');
   els.lockinfo.textContent = locked === null
     ? '弦をタップするとその弦に固定（もう一度で自動）'
-    : `${6 - locked}弦に固定中（もう一度タップで自動）`;
+    : `${n - locked}弦に固定中（もう一度タップで自動）`;
 }
 function buildSpeed() {
   [...els.speed.children].forEach((b) => b.classList.toggle('on', b.dataset.v === speedKey));
 }
 buildTuningSelect(); buildStrings(); buildSpeed(); els.a4.textContent = a4;
 
-els.tuning.addEventListener('change', () => {
-  tuningKey = els.tuning.value; store.set('tuning', tuningKey); locked = null; buildStrings(); resetSmoothing();
+els.tuning.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === tuningKey) return;
+  tuningKey = b.dataset.v; store.set('tuning', tuningKey); locked = null;
+  buildTuningSelect(); buildStrings(); resetSmoothing();
 });
 els.strings.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
