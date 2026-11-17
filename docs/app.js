@@ -37,8 +37,8 @@ const store = {
 let tuningKey = store.get('tuning', 'standard');
 if (!TUNINGS[tuningKey]) tuningKey = 'standard';
 let a4 = store.get('a4', 440);
-let speedKey = store.get('speed', 'fast');
-if (!SPEED[speedKey]) speedKey = 'fast';
+let speedKey = store.get('speed', 'stable');
+if (!SPEED[speedKey]) speedKey = 'stable';
 let locked = null; // 固定中の弦 index
 
 // ---------- DOM ----------
