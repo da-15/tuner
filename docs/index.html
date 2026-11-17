@@ -27,9 +27,8 @@
   .wrap { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
 
   .bar { display: flex; gap: 8px; }
-  select, .chip { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-    border-radius: 10px; padding: 10px 12px; font-size: 15px; font-family: inherit; }
-  select { flex: 1; min-width: 0; appearance: none; -webkit-appearance: none; }
+  .chip { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px 10px; font-size: 14px; font-family: inherit; }
   .chip { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .chip button { background: none; border: none; color: var(--text); font-size: 18px; padding: 0 4px; }
 
@@ -51,7 +50,7 @@
   .meter div.gated { background: var(--dim); }
   .ok   { color: var(--ok); }  .near { color: var(--near); }  .off { color: var(--off); }
 
-  .strings { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .strings { display: grid; grid-template-columns: repeat(var(--n, 6), 1fr); gap: 6px; }
   .strings button { background: var(--panel); border: 1px solid var(--line); color: var(--text);
     border-radius: 12px; padding: 10px 0 8px; font-size: 18px; font-weight: 600; font-family: inherit; }
   .strings button small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; margin-top: 2px; }
@@ -61,11 +60,16 @@
   .strings.hidden { display: none; }
   .lockinfo { text-align: center; font-size: 12px; color: var(--dim); min-height: 16px; margin-top: -6px; }
 
-  .speed { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border: 1px solid var(--line);
+  /* セグメント切り替え（チューニング・反応速度） */
+  .seg { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line);
     border-radius: 10px; padding: 3px; }
-  .speed button { background: none; border: none; color: var(--dim); padding: 8px; border-radius: 8px;
-    font-size: 14px; font-family: inherit; }
-  .speed button.on { background: #2a313b; color: var(--text); }
+  .seg button { flex: 1 1 0; min-width: 0; background: none; border: none; color: var(--dim);
+    padding: 8px 2px; border-radius: 8px; font-size: 14px; font-family: inherit; white-space: nowrap; }
+  .seg button.on { background: #2a313b; color: var(--text); font-weight: 600; }
+  /* 5つを1行に収める：文字数に応じて幅を配分し、画面幅に合わせて文字を少し縮める */
+  .tuning button { flex: 1 1 auto; font-size: clamp(11px, 3.3vw, 14px); letter-spacing: -0.02em; padding: 9px 2px; }
+  .tuning button.on { font-weight: 400; } /* 太字にすると幅が変わって並びがずれるため */
+  .speed { flex: 1; }
   .info { text-align: center; font-size: 11px; color: var(--dim); margin-top: auto; line-height: 1.6; }
 
   #start { position: fixed; inset: 0; background: rgba(10,12,15,.92); display: flex; flex-direction: column;
@@ -79,14 +83,7 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="bar">
-    <select id="tuning" aria-label="チューニング"></select>
-    <div class="chip">A4
-      <button id="a4down" aria-label="A4を下げる">−</button>
-      <span id="a4">440</span>
-      <button id="a4up" aria-label="A4を上げる">＋</button>
-    </div>
-  </div>
+  <div class="seg tuning" id="tuning" role="radiogroup" aria-label="チューニング"></div>
 
   <div class="display idle" id="display">
     <svg viewBox="0 0 300 175" aria-hidden="true">
@@ -111,9 +108,16 @@
   <div class="strings" id="strings"></div>
   <div class="lockinfo" id="lockinfo">弦をタップするとその弦に固定（もう一度で自動）</div>
 
-  <div class="speed" id="speed">
-    <button data-v="fast">反応 速い</button>
-    <button data-v="stable">安定重視</button>
+  <div class="bar">
+    <div class="seg speed" id="speed">
+      <button data-v="fast">反応 速い</button>
+      <button data-v="stable">安定重視</button>
+    </div>
+    <div class="chip">A4
+      <button id="a4down" aria-label="A4を下げる">−</button>
+      <span id="a4">440</span>
+      <button id="a4up" aria-label="A4を上げる">＋</button>
+    </div>
   </div>
 
   <div class="info" id="info"></div>
