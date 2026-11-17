@@ -17,9 +17,12 @@ const SPEED = {
   stable: { fftSize: 4096, median: 5, alpha: 0.25 },
 };
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
-const GATE_RMS = 0.002;   // これより小さい音は無視（iPhoneは入力が小さめなので低めに）
+const GATE_RMS = 0.001;   // 最低限のしきい値（実際は雑音レベルに合わせて自動で上がる）
 const HOLD_RATIO = 0.1;   // ピークの 1/10（-20dB）まで減衰したら針を止める
-const REPLUCK_RATIO = 4;  // 止めた時点の音量の 4倍（+12dB）を超えたら弾き直しとみなす
+const REPLUCK_RATIO = 2.5; // 余韻の音量の 2.5倍（+8dB）を超えたら弾き直しとみなす
+const SNR_HOLD = 4;       // 雑音の4倍（+12dB）を下回ったら針を止める
+const NOISE_RISE_FAST = 1.01;   // 雑音レベル推定の上昇速度（雑音だけのとき：1秒で約1.8倍）
+const NOISE_RISE_SLOW = 1.0005; // 同（楽器が鳴っているとき：1秒で約3%）
 const ENV_ALPHA = 0.2;    // 音量のならし具合
 const CLEAR = 0.9;        // 音程の明確さ（YIN）の基準
 const SWITCH_FRAMES = 3;  // 別の音への切り替えに必要な連続フレーム数
@@ -111,7 +114,7 @@ $('a4up').addEventListener('click', () => setA4(a4 + 1));
 
 // ---------- audio ----------
 let ctx = null, analyser = null, buf = null, stream = null, running = false;
-let source = null, hp = null, mute = null; // ノードは参照を保持しておく
+let source = null, hp = null, lp = null, mute = null; // ノードは参照を保持しておく
 let wakeLock = null;
 
 async function start() {
@@ -140,7 +143,9 @@ async function start() {
       hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45;
       if (!analyser) { analyser = ctx.createAnalyser(); analyser.smoothingTimeConstant = 0; }
       if (!mute) { mute = ctx.createGain(); mute.gain.value = 0; analyser.connect(mute).connect(ctx.destination); }
-      source.connect(hp).connect(analyser);
+      // 1500Hz より上の雑音をカット（音程に必要な成分は残る。小さい音での判定のずれを大幅に減らす）
+      lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500; lp.Q.value = 0.707;
+      source.connect(hp).connect(lp).connect(analyser);
       applySpeed();
     }
     if (ctx.state !== 'running') {
@@ -208,7 +213,7 @@ els.startBtn.addEventListener('click', start);
 // ---------- smoothing ----------
 let hist = [], smooth = null;
 let cand = null, candN = 0;                    // 別の音へ切り替える候補
-let envRms = 0, peakRms = 0, held = false, heldAt = 0, holdRms = 0, confirmN = 0;
+let envRms = 0, noiseRms = 0, peakRms = 0, held = false, heldAt = 0, tailRms = 0, confirmN = 0, confirmF = 0;
 function resetSmoothing() { hist = []; smooth = null; cand = null; candN = 0; }
 function median(arr) {
   const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
@@ -251,19 +256,27 @@ function tick() {
   // 入力レベルメーター（-60dB〜0dB）
   const db = 20 * Math.log10(rms + 1e-9);
   els.level.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
-  els.level.classList.toggle('gated', rms <= GATE_RMS);
 
   const now = performance.now();
   envRms = envRms === 0 ? rms : envRms + ENV_ALPHA * (rms - envRms); // うなり等で揺れないよう音量をならす
-  const res = rms > GATE_RMS ? PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15) : null;
+  const gate = Math.max(GATE_RMS, noiseRms * 2);       // 雑音の2倍（+6dB）以上を音とみなす
+  els.level.classList.toggle('gated', rms <= gate);
+
+  const res = rms > gate ? PitchDetector.yin(buf, ctx.sampleRate, 60, 1400, 0.15) : null;
+  // まわりの雑音レベルを推定：下がるときはすぐ追従。上がるのは、音程が取れない（雑音だけの）ときは速く、
+  // 楽器が鳴っているときはごくゆっくり（鳴っている音を雑音と勘違いしないため）
+  noiseRms = Math.min(Math.max(noiseRms, GATE_RMS / 2) * (res ? NOISE_RISE_SLOW : NOISE_RISE_FAST), envRms);
   const clear = !!res && res.clarity >= CLEAR;
   const freq = res ? correctOctave(res.freq) : 0;
 
   if (held) {
-    // 固定中：止めた時点よりはっきり大きく、かつ音程が明確な状態が続いたら「弾き直し」とみなして解除
-    // （ペグに触れた雑音は音量が上がっても音程が不明確なので解除されない）
-    if (clear && rms > Math.max(GATE_RMS * 5, holdRms * REPLUCK_RATIO)) {
-      if (++confirmN >= 2) {
+    // 固定中：余韻の音量（ゆっくりしか上がらない）より明らかに大きく、音程が取れる状態が2回続いたら弾き直し
+    // （ペグに触れた雑音は音程が取れないので解除されない）
+    tailRms = Math.min(tailRms * 1.02, envRms);
+    if (res && rms > Math.max(gate * 1.5, tailRms * REPLUCK_RATIO)) {
+      if (confirmN > 0 && Math.abs(centsBetween(freq, confirmF)) < 50) confirmN++;
+      else { confirmF = freq; confirmN = 1; }
+      if (confirmN >= 2) {
         held = false; confirmN = 0;
         els.display.classList.remove('held');
         peakRms = envRms = rms;
@@ -284,12 +297,13 @@ function tick() {
   }
 
   peakRms = Math.max(peakRms, envRms);
-  // 余韻がピークから -20dB を下回ったら（または音が消えたら）針をその位置で止める
-  if (smooth !== null && (rms <= GATE_RMS || envRms < peakRms * HOLD_RATIO)) {
-    held = true; heldAt = now; holdRms = envRms; confirmN = 0;
+  // 余韻がピークから -20dB を下回るか、雑音に埋もれてきたら（雑音の4倍未満）針をその位置で止める
+  const holdLevel = Math.max(peakRms * HOLD_RATIO, noiseRms * SNR_HOLD);
+  if (smooth !== null && (rms <= gate || envRms < holdLevel)) {
+    held = true; heldAt = now; tailRms = envRms; confirmN = 0;
     els.display.classList.add('held');
   } else if (res) {
-    const weak = envRms < peakRms * 0.3;     // 余韻が弱くなってきたら明確な音程だけ使う
+    const weak = envRms < Math.max(peakRms * 0.3, noiseRms * SNR_HOLD * 2); // 弱くなってきたら明確な音程だけ
     if (!weak || clear) {
       const f = acceptFreq(freq);
       if (f !== null) render(f);
