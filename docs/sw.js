@@ -1,8 +1,8 @@
 // オフライン対応：アプリ本体をキャッシュ。更新したら CACHE の番号を上げる。
-const CACHE = 'tuner-v11';
+const CACHE = 'tuner-v12';
 const ASSETS = [
   './', './index.html', './app.js', './pitch.js', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/icon-maskable-512.png', './icons/icon.svg',
+  './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/apple-touch-icon-v2.png', './icons/icon-maskable-512-v2.png', './icons/icon-v2.svg',
 ];
 
 self.addEventListener('install', (e) => {
