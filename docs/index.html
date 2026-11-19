@@ -50,25 +50,12 @@
   .meter div.gated { background: var(--dim); }
   .ok   { color: var(--ok); }  .near { color: var(--near); }  .off { color: var(--off); }
 
-  .strings { display: grid; grid-template-columns: repeat(var(--n, 6), 1fr); gap: 6px; }
-  .strings button { background: var(--panel); border: 1px solid var(--line); color: var(--text);
-    border-radius: 12px; padding: 10px 0 8px; font-size: 18px; font-weight: 600; font-family: inherit; }
-  .strings button small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; margin-top: 2px; }
-  .strings button.active { border-color: var(--text); }
-  .strings button.locked { background: #2a3340; border-color: #6aa9ff; }
-  .strings button.tuned { color: var(--ok); }
-  .strings.hidden { display: none; }
-  .lockinfo { text-align: center; font-size: 12px; color: var(--dim); min-height: 16px; margin-top: -6px; }
-
-  /* セグメント切り替え（チューニング・反応速度） */
+  /* セグメント切り替え（反応速度） */
   .seg { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line);
     border-radius: 10px; padding: 3px; }
   .seg button { flex: 1 1 0; min-width: 0; background: none; border: none; color: var(--dim);
     padding: 8px 2px; border-radius: 8px; font-size: 14px; font-family: inherit; white-space: nowrap; }
   .seg button.on { background: #2a313b; color: var(--text); font-weight: 600; }
-  /* 5つを1行に収める：文字数に応じて幅を配分し、画面幅に合わせて文字を少し縮める */
-  .tuning button { flex: 1 1 auto; font-size: clamp(11px, 3.3vw, 14px); letter-spacing: -0.02em; padding: 9px 2px; }
-  .tuning button.on { font-weight: 400; } /* 太字にすると幅が変わって並びがずれるため */
   .speed { flex: 1; }
   .info { text-align: center; font-size: 11px; color: var(--dim); margin-top: auto; line-height: 1.6; }
 
@@ -83,8 +70,6 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="seg tuning" id="tuning" role="radiogroup" aria-label="チューニング"></div>
-
   <div class="display idle" id="display">
     <svg viewBox="0 0 300 175" aria-hidden="true">
       <g id="ticks"></g>
@@ -104,9 +89,6 @@
     <div class="hint" id="hint"></div>
     <div class="meter" title="入力レベル"><div id="level"></div></div>
   </div>
-
-  <div class="strings" id="strings"></div>
-  <div class="lockinfo" id="lockinfo">弦をタップするとその弦に固定（もう一度で自動）</div>
 
   <div class="bar">
     <div class="seg speed" id="speed">
@@ -128,7 +110,7 @@
   <p id="startMsg">マイクを使って音程を判定します。音声はスマホの中だけで処理され、どこにも送信されません。</p>
 </div>
 
-<script src="./pitch.js?v=14"></script>
-<script src="./app.js?v=14"></script>
+<script src="./pitch.js?v=15"></script>
+<script src="./app.js?v=15"></script>
 </body>
 </html>
