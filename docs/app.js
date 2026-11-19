@@ -286,8 +286,7 @@ function render(f) {
   els.needle.setAttribute('transform', `rotate(${angle} 150 165)`);
   els.okmark.setAttribute('opacity', cls === 'ok' ? '1' : '0');
 
-  if (cls === 'ok') els.hint.textContent = '✓ OK';
-  else els.hint.textContent = c < 0 ? '↑ 上げる（締める）' : '↓ 下げる（緩める）';
+  els.hint.textContent = cls === 'ok' ? '✓ OK' : ''; // 高い・低いは針で分かるので、合ったときだけ表示
   els.hint.className = 'hint ' + cls;
 }
 

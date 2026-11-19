@@ -37,6 +37,7 @@
   .display.idle { opacity: .45; }
   .display.held svg, .display.held .note, .display.held .readout { opacity: .6; }
   .display.held .hint::after { content: '・保持中'; color: var(--dim); font-weight: 400; font-size: 13px; margin-left: 4px; }
+  .display.held .hint:empty::after { content: '保持中'; margin-left: 0; }
   svg { width: 100%; height: auto; display: block; }
   .note { font-size: 84px; font-weight: 700; line-height: 1; margin-top: -8px; letter-spacing: -1px;
     font-variant-numeric: tabular-nums; }
@@ -99,7 +100,7 @@
   <p id="startMsg">マイクを使って音程を判定します。音声はスマホの中だけで処理され、どこにも送信されません。</p>
 </div>
 
-<script src="./pitch.js?v=16"></script>
-<script src="./app.js?v=16"></script>
+<script src="./pitch.js?v=17"></script>
+<script src="./app.js?v=17"></script>
 </body>
 </html>
