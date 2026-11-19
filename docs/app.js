@@ -8,6 +8,7 @@ const MEDIAN_N = 5;       // 外れ値よけ：直近5フレームの中央値�
 const ALPHA_STILL = 0.08; // 音が止まっているときの追従の強さ（小さいほど針が落ち着く）
 const ALPHA_MOVE = 0.7;   // 音が動いているときの追従の強さ
 const MOVE_FROM = 2;      // 今の表示とのずれが 2cent 以下なら「止まっている」
+const TAIL_RATIO = 0.1;   // ピークから -20dB より下は「余韻の終わり」：読み取りがばらつくので、強くならし続ける
 const MOVE_TO = 10;       // 10cent 以上なら「動いている」（その間はなめらかに切り替え）
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const GATE_RMS = 0.00025; // 最低限のしきい値（-72dB。実際は雑音レベルに合わせて自動で上がる。
@@ -174,12 +175,13 @@ function resetSmoothing() { hist = []; smooth = null; cand = null; candN = 0; }
 function median(arr) {
   const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
 }
-function smoothFreq(f) {
+function smoothFreq(f, tail = false) {
   hist.push(f); if (hist.length > MEDIAN_N) hist.shift();
   const m = median(hist);
   if (smooth === null) return (smooth = m);
   const d = Math.abs(centsBetween(m, smooth));
-  const k = Math.min(1, Math.max(0, (d - MOVE_FROM) / (MOVE_TO - MOVE_FROM)));
+  // 余韻の終わりでは、ばらつきを「ペグを回している」と勘違いしないよう、速く追いかけない
+  const k = tail ? 0 : Math.min(1, Math.max(0, (d - MOVE_FROM) / (MOVE_TO - MOVE_FROM)));
   const alpha = ALPHA_STILL + (ALPHA_MOVE - ALPHA_STILL) * k;
   smooth = smooth * Math.pow(m / smooth, alpha); // 対数領域で補間
   return smooth;
@@ -194,8 +196,9 @@ function foldOctave(f) {
   return f;
 }
 // 今の音から近ければそのまま追従。大きく離れた音は数フレーム続いたときだけ採用（一瞬の誤検出で針が飛ばない）
-function acceptFreq(f) {
-  if (smooth !== null && Math.abs(centsBetween(f, smooth)) <= 35) { cand = null; candN = 0; return smoothFreq(f); }
+function acceptFreq(f, tail = false) {
+  if (smooth !== null && Math.abs(centsBetween(f, smooth)) <= 35) { cand = null; candN = 0; return smoothFreq(f, tail); }
+  if (tail && smooth !== null) return null; // 余韻の終わりで大きく離れた値は誤検出とみなす（別の音は弾き直しで拾う）
   if (cand !== null && Math.abs(centsBetween(f, cand)) <= 30) candN++; else { cand = f; candN = 1; }
   if (candN >= (smooth === null ? 2 : SWITCH_FRAMES)) { resetSmoothing(); return smoothFreq(f); }
   return null;
@@ -259,8 +262,9 @@ function tick() {
     els.display.classList.add('held');
   } else if (res) {
     const weak = envRms < Math.max(peakRms * 0.3, noiseRms * SNR_HOLD * 2); // 弱くなってきたら明確な音程だけ
+    const tail = envRms < Math.max(peakRms * TAIL_RATIO, noiseRms * SNR_HOLD * 4);
     if (!weak || clear) {
-      const f = acceptFreq(foldOctave(freq));
+      const f = acceptFreq(foldOctave(freq), tail);
       if (f !== null) render(f);
     }
   }
