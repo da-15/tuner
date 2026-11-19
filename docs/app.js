@@ -1,13 +1,6 @@
 'use strict';
 
 // ---------- settings ----------
-const TUNINGS = {
-  standard:  { name: 'レギュラー', notes: [40, 45, 50, 55, 59, 64] },   // E A D G B E
-  halfdown:  { name: '半音下げ', notes: [39, 44, 49, 54, 58, 63] },     // E♭ A♭ D♭ G♭ B♭ E♭
-  guitalele: { name: 'ギタレレ', notes: [45, 50, 55, 60, 64, 69] },     // A D G C E A
-  ukulele:   { name: 'ウクレレ', notes: [67, 60, 64, 69] },             // G C E A（4弦がHigh-G）
-  chromatic: { name: 'クロマチック', notes: null },                     // 全音名
-};
 // fast: 短い窓 + 弱いスムージング / stable: 長い窓 + 強めのスムージング
 const SPEED = {
   fast:   { fftSize: 2048, median: 1, alpha: 0.55 },
@@ -31,18 +24,15 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('tuner.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('tuner.' + k, JSON.stringify(v)); } catch {} },
 };
-let tuningKey = store.get('tuning', 'standard');
-if (!TUNINGS[tuningKey]) tuningKey = 'standard';
 let a4 = store.get('a4', 440);
 let speedKey = store.get('speed', 'stable');
 if (!SPEED[speedKey]) speedKey = 'stable';
-let locked = null; // 固定中の弦 index
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const els = {
-  tuning: $('tuning'), a4: $('a4'), display: $('display'), needle: $('needle'), note: $('note'),
-  cents: $('cents'), freq: $('freq'), hint: $('hint'), strings: $('strings'), lockinfo: $('lockinfo'),
+  a4: $('a4'), display: $('display'), needle: $('needle'), note: $('note'),
+  cents: $('cents'), freq: $('freq'), hint: $('hint'),
   speed: $('speed'), info: $('info'), start: $('start'), startBtn: $('startBtn'), startMsg: $('startMsg'),
   okmark: $('okmark'), level: $('level'),
 };
@@ -74,37 +64,11 @@ const centsBetween = (f, ref) => 1200 * Math.log2(f / ref);
 })();
 
 // ---------- UI build ----------
-function buildTuningSelect() {
-  els.tuning.innerHTML = Object.entries(TUNINGS)
-    .map(([k, t]) => `<button role="radio" data-v="${k}" aria-checked="${k === tuningKey}" class="${k === tuningKey ? 'on' : ''}">${t.name}</button>`).join('');
-}
-function buildStrings() {
-  const t = TUNINGS[tuningKey];
-  if (!t.notes) { els.strings.classList.add('hidden'); els.lockinfo.textContent = ''; return; }
-  els.strings.classList.remove('hidden');
-  const n = t.notes.length;
-  els.strings.style.setProperty('--n', n);
-  // 太い弦（6弦／4弦）→ 1弦 の順に表示
-  els.strings.innerHTML = t.notes.map((m, i) =>
-    `<button data-i="${i}" class="${locked === i ? 'locked' : ''}">${noteName(m)}<small>${n - i}弦</small></button>`).join('');
-  els.lockinfo.textContent = locked === null
-    ? '弦をタップするとその弦に固定（もう一度で自動）'
-    : `${n - locked}弦に固定中（もう一度タップで自動）`;
-}
 function buildSpeed() {
   [...els.speed.children].forEach((b) => b.classList.toggle('on', b.dataset.v === speedKey));
 }
-buildTuningSelect(); buildStrings(); buildSpeed(); els.a4.textContent = a4;
+buildSpeed(); els.a4.textContent = a4;
 
-els.tuning.addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b || b.dataset.v === tuningKey) return;
-  tuningKey = b.dataset.v; store.set('tuning', tuningKey); locked = null;
-  buildTuningSelect(); buildStrings(); resetSmoothing();
-});
-els.strings.addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return;
-  const i = +b.dataset.i; locked = locked === i ? null : i; buildStrings(); resetSmoothing();
-});
 els.speed.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   speedKey = b.dataset.v; store.set('speed', speedKey); buildSpeed(); applySpeed();
@@ -226,17 +190,13 @@ function smoothFreq(f) {
   smooth = smooth === null ? m : smooth * Math.pow(m / smooth, cfg.alpha); // 対数領域で補間
   return smooth;
 }
-// オクターブ誤検出の補正：基音が弱い低音弦（ギタレレの6弦Aなど）は余韻で2倍音を拾いやすい
-function correctOctave(f) {
-  // 追いかけている音（または止めている音）のちょうど1オクターブ上なら、倍音を拾ったとみなす
-  if (smooth !== null && Math.abs(centsBetween(f, smooth) - 1200) < 60) return f / 2;
-  // どの弦にも近くないのに、半分の周波数ならどれかの弦に合う場合も補正
-  const t = TUNINGS[tuningKey];
-  if (t.notes) {
-    const targets = locked !== null ? [t.notes[locked]] : t.notes;
-    const dist = (x) => Math.min(...targets.map((n) => Math.abs(centsBetween(x, midiToFreq(n)))));
-    if (dist(f) > 100 && dist(f / 2) < 60) return f / 2;
-  }
+// オクターブ違いの読み取り（余韻で2倍音を拾う等）は、今の音と同じオクターブにそろえる。
+// クロマチックでは音名とずれ(cent)はオクターブで変わらないので、読み違えても表示は狂わない
+function foldOctave(f) {
+  if (smooth === null) return f;
+  const d = centsBetween(f, smooth);
+  if (Math.abs(d - 1200) < 35) return f / 2;
+  if (Math.abs(d + 1200) < 35) return f * 2;
   return f;
 }
 // 今の音から近ければそのまま追従。大きく離れた音は数フレーム続いたときだけ採用（一瞬の誤検出で針が飛ばない）
@@ -268,7 +228,7 @@ function tick() {
   // 楽器が鳴っているときはごくゆっくり（鳴っている音を雑音と勘違いしないため）
   noiseRms = Math.min(Math.max(noiseRms, GATE_RMS / 2) * (res ? NOISE_RISE_SLOW : NOISE_RISE_FAST), envRms);
   const clear = !!res && res.clarity >= CLEAR;
-  const freq = res ? correctOctave(res.freq) : 0;
+  const freq = res ? res.freq : 0;
 
   if (held) {
     // 固定中：余韻の音量（ゆっくりしか上がらない）より明らかに大きく、音程が取れる状態が2回続いたら弾き直し
@@ -306,7 +266,7 @@ function tick() {
   } else if (res) {
     const weak = envRms < Math.max(peakRms * 0.3, noiseRms * SNR_HOLD * 2); // 弱くなってきたら明確な音程だけ
     if (!weak || clear) {
-      const f = acceptFreq(freq);
+      const f = acceptFreq(foldOctave(freq));
       if (f !== null) render(f);
     }
   }
@@ -317,21 +277,10 @@ function setIdle() {
   els.display.classList.add('idle');
   els.hint.textContent = ''; els.hint.className = 'hint';
   els.okmark.setAttribute('opacity', '0');
-  [...els.strings.children].forEach((b) => b.classList.remove('active', 'tuned'));
 }
 
 function render(f) {
-  const t = TUNINGS[tuningKey];
-  let m;
-  if (t.notes) {
-    if (locked !== null) m = t.notes[locked];
-    else {
-      let best = Infinity;
-      t.notes.forEach((n) => { const d = Math.abs(centsBetween(f, midiToFreq(n))); if (d < best) { best = d; m = n; } });
-    }
-  } else {
-    m = Math.round(69 + 12 * Math.log2(f / a4));
-  }
+  const m = Math.round(69 + 12 * Math.log2(f / a4)); // いちばん近い半音
   const c = centsBetween(f, midiToFreq(m));
   const abs = Math.abs(c);
   const cls = abs <= IN_TUNE ? 'ok' : abs <= NEAR ? 'near' : 'off';
@@ -344,18 +293,9 @@ function render(f) {
   els.needle.setAttribute('transform', `rotate(${angle} 150 165)`);
   els.okmark.setAttribute('opacity', cls === 'ok' ? '1' : '0');
 
-  if (abs > 300 && t.notes) els.hint.textContent = c < 0 ? 'かなり低い' : 'かなり高い';
-  else if (cls === 'ok') els.hint.textContent = '✓ OK';
+  if (cls === 'ok') els.hint.textContent = '✓ OK';
   else els.hint.textContent = c < 0 ? '↑ 上げる（締める）' : '↓ 下げる（緩める）';
   els.hint.className = 'hint ' + cls;
-
-  if (t.notes) {
-    const idx = t.notes.indexOf(m);
-    [...els.strings.children].forEach((b, i) => {
-      b.classList.toggle('active', i === idx);
-      b.classList.toggle('tuned', i === idx && cls === 'ok');
-    });
-  }
 }
 
 // ---------- PWA ----------
