@@ -1,11 +1,14 @@
 'use strict';
 
 // ---------- settings ----------
-// fast: 短い窓 + 弱いスムージング / stable: 長い窓 + 強めのスムージング
-const SPEED = {
-  fast:   { fftSize: 2048, median: 1, alpha: 0.55 },
-  stable: { fftSize: 4096, median: 5, alpha: 0.25 },
-};
+const FFT_SIZE = 4096;    // 解析窓（48kHzで約85ms。低い6弦も安定して取れる長さ）
+// 針のならし方は自動で切り替える：音が動いている（ペグを回している）ときは速く追いかけ、
+// 止まったら強くならして針を落ち着かせる
+const MEDIAN_N = 5;       // 外れ値よけ：直近5フレームの中央値を使う
+const ALPHA_STILL = 0.08; // 音が止まっているときの追従の強さ（小さいほど針が落ち着く）
+const ALPHA_MOVE = 0.7;   // 音が動いているときの追従の強さ
+const MOVE_FROM = 2;      // 今の表示とのずれが 2cent 以下なら「止まっている」
+const MOVE_TO = 10;       // 10cent 以上なら「動いている」（その間はなめらかに切り替え）
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 const GATE_RMS = 0.001;   // 最低限のしきい値（実際は雑音レベルに合わせて自動で上がる）
 const HOLD_RATIO = 0.05;  // ピークの 1/20（-26dB）まで減衰したら針を止める
@@ -25,15 +28,13 @@ const store = {
   set(k, v) { try { localStorage.setItem('tuner.' + k, JSON.stringify(v)); } catch {} },
 };
 let a4 = store.get('a4', 440);
-let speedKey = store.get('speed', 'stable');
-if (!SPEED[speedKey]) speedKey = 'stable';
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const els = {
   a4: $('a4'), display: $('display'), needle: $('needle'), note: $('note'),
   cents: $('cents'), freq: $('freq'), hint: $('hint'),
-  speed: $('speed'), info: $('info'), start: $('start'), startBtn: $('startBtn'), startMsg: $('startMsg'),
+  info: $('info'), start: $('start'), startBtn: $('startBtn'), startMsg: $('startMsg'),
   okmark: $('okmark'), level: $('level'),
 };
 
@@ -64,15 +65,8 @@ const centsBetween = (f, ref) => 1200 * Math.log2(f / ref);
 })();
 
 // ---------- UI build ----------
-function buildSpeed() {
-  [...els.speed.children].forEach((b) => b.classList.toggle('on', b.dataset.v === speedKey));
-}
-buildSpeed(); els.a4.textContent = a4;
+els.a4.textContent = a4;
 
-els.speed.addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return;
-  speedKey = b.dataset.v; store.set('speed', speedKey); buildSpeed(); applySpeed();
-});
 function setA4(v) { a4 = Math.max(430, Math.min(450, v)); els.a4.textContent = a4; store.set('a4', a4); }
 $('a4down').addEventListener('click', () => setA4(a4 - 1));
 $('a4up').addEventListener('click', () => setA4(a4 + 1));
@@ -111,7 +105,10 @@ async function start() {
       // 1500Hz より上の雑音をカット（音程に必要な成分は残る。小さい音での判定のずれを大幅に減らす）
       lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500; lp.Q.value = 0.707;
       source.connect(hp).connect(lp).connect(analyser);
-      applySpeed();
+      analyser.fftSize = FFT_SIZE;
+      buf = new Float32Array(analyser.fftSize);
+      resetSmoothing();
+      updateInfo();
     }
     if (ctx.state !== 'running') {
       // まだ止まっている場合は、もう一度タップしてもらって再開
@@ -139,13 +136,6 @@ function stop() {
 function showStartError(msg) {
   els.start.classList.remove('hidden');
   els.startMsg.textContent = msg; els.startMsg.classList.add('err');
-}
-function applySpeed() {
-  if (!analyser) return;
-  analyser.fftSize = SPEED[speedKey].fftSize;
-  buf = new Float32Array(analyser.fftSize);
-  resetSmoothing();
-  updateInfo();
 }
 function updateInfo() {
   if (!ctx || !analyser) return;
@@ -184,10 +174,13 @@ function median(arr) {
   const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)];
 }
 function smoothFreq(f) {
-  const cfg = SPEED[speedKey];
-  hist.push(f); if (hist.length > cfg.median) hist.shift();
+  hist.push(f); if (hist.length > MEDIAN_N) hist.shift();
   const m = median(hist);
-  smooth = smooth === null ? m : smooth * Math.pow(m / smooth, cfg.alpha); // 対数領域で補間
+  if (smooth === null) return (smooth = m);
+  const d = Math.abs(centsBetween(m, smooth));
+  const k = Math.min(1, Math.max(0, (d - MOVE_FROM) / (MOVE_TO - MOVE_FROM)));
+  const alpha = ALPHA_STILL + (ALPHA_MOVE - ALPHA_STILL) * k;
+  smooth = smooth * Math.pow(m / smooth, alpha); // 対数領域で補間
   return smooth;
 }
 // オクターブ違いの読み取り（余韻で2倍音を拾う等）は、今の音と同じオクターブにそろえる。
