@@ -10,8 +10,9 @@ const ALPHA_MOVE = 0.7;   // 音が動いているときの追従の強さ
 const MOVE_FROM = 2;      // 今の表示とのずれが 2cent 以下なら「止まっている」
 const MOVE_TO = 10;       // 10cent 以上なら「動いている」（その間はなめらかに切り替え）
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
-const GATE_RMS = 0.001;   // 最低限のしきい値（実際は雑音レベルに合わせて自動で上がる）
-const HOLD_RATIO = 0.05;  // ピークの 1/20（-26dB）まで減衰したら針を止める
+const GATE_RMS = 0.00025; // 最低限のしきい値（-72dB。実際は雑音レベルに合わせて自動で上がる。
+                          // 高すぎるとギタレレなど音の小さい楽器で、余韻が雑音に埋もれる前に針が止まってしまう）
+const HOLD_RATIO = 0.025; // ピークの 1/40（-32dB）まで減衰したら針を止める
 const REPLUCK_RATIO = 2.5; // 余韻の音量の 2.5倍（+8dB）を超えたら弾き直しとみなす
 const SNR_HOLD = 2.5;     // 雑音の2.5倍（+8dB）を下回ったら針を止める
 const NOISE_RISE_FAST = 1.01;   // 雑音レベル推定の上昇速度（雑音だけのとき：1秒で約1.8倍）
@@ -251,7 +252,7 @@ function tick() {
   }
 
   peakRms = Math.max(peakRms, envRms);
-  // 余韻がピークから -20dB を下回るか、雑音に埋もれてきたら（雑音の4倍未満）針をその位置で止める
+  // 余韻がピークから -32dB を下回るか、雑音に埋もれてきたら（雑音の2.5倍未満）針をその位置で止める
   const holdLevel = Math.max(peakRms * HOLD_RATIO, noiseRms * SNR_HOLD);
   if (smooth !== null && (rms <= gate || envRms < holdLevel)) {
     held = true; heldAt = now; tailRms = envRms; confirmN = 0;
